@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
     
     <style>
-        /* Your existing CSS here */
+        /* Je bestaande CSS hier */
         body, html {
             margin: 0;
             padding: 0;
@@ -149,10 +149,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
 
     <script type="module">
-        // Importeer de benodigde Firebase functies
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
-        // import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js"; // Optioneel
 
         // Jouw web app's Firebase configuration
         const firebaseConfig = {
@@ -167,43 +165,24 @@
 
         // Initialiseer Firebase
         const app = initializeApp(firebaseConfig);
-        // const analytics = getAnalytics(app); // Optioneel
-
-        // Krijg een referentie naar de Firestore-service
         const db = getFirestore(app);
 
-        // MAAK DEZE REFERENTIES NU GLOBAAL BESCHIKBAAR VIA WINDOW
-        window.db = db;
-        window.collection = collection;
-        window.addDoc = addDoc;
-        window.getDocs = getDocs;
-        window.deleteDoc = deleteDoc;
-        window.doc = doc;
-        window.writeBatch = writeBatch;
-
-        // Roep de globale initialisatiefunctie van de kaart aan ZODRA deze module geladen is
-        // Deze functie moet dan wel in een reguliere script tag gedefinieerd zijn
-        // en in de DOM bestaan voordat deze module is geladen (dus, de script tag komt eerder).
-        // Of, we voeren de initialisatie direct hier uit. Laten we dat doen.
-        // We moeten dan WEL alle globale variabelen en functies hierin definiëren of importeren.
-        // HET EENVOUDIGSTE IS OM ALLE KAARTLOGICA BINNEN DEZE MODULE TE PLAATSEN.
-        // Daarmee vermijd je alle timing en `window` trucjes.
-
-        // Hieronder volgt de **hele kaartlogica** die eerder in de andere script tag stond.
-        // Alle functies en variabelen zijn nu lokaal voor deze module, tenzij expliciet aan `window` gehangen.
-
-        // --- Globale Variabelen voor de Kaart (nu lokaal in de module) ---
+        // --- Globale Variabelen voor de Kaart ---
         let map;
         let geoJsonLayer; 
         let highlightedCountryLayers = {}; 
         let geocoderControl; 
         let isMobileViewActive = false;
-        let savedPins = []; 
-        let countriesWithPins = new Set(); 
+        let savedPins = []; // Array om opgeslagen pins bij te houden
+        let countriesWithPins = new Set(); // Set om namen van landen met pins bij te houden
+
+        // NIEUW: Bewaar een referentie naar de Leaflet marker objecten
+        let leafletMarkers = {}; // {markerId: L.Marker object}
+
 
         const settings = {
-            pinColor: '#ff4b4b',
-            pinSize: 40,
+            pinColor: '#ff4b4b', // Initiële kleur voor nieuwe pins EN alle bestaande pins
+            pinSize: 40,         // Initiële grootte voor nieuwe pins EN alle bestaande pins
             countryColor: '#3388ff'
         };
 
@@ -234,7 +213,6 @@
                     }
                 }).addTo(map);
 
-                // Nu landen geladen zijn, kunnen we opgeslagen pins laden van Firestore
                 loadPinsFromBackend(); 
             } catch (error) {
                 console.error("Fout bij het laden van landengegevens:", error);
@@ -243,7 +221,6 @@
 
         // --- Besturingselementen Toevoegen ---
         function addControls() {
-            // Zoekbalk
             const geocoder = L.Control.Geocoder.nominatim();
             geocoderControl = L.Control.geocoder({
                 geocoder: geocoder,
@@ -257,10 +234,8 @@
             })
             .addTo(map);
 
-            // Volledig scherm knop
             map.addControl(new L.Control.Fullscreen());
 
-            // Instellingenknop
             L.Control.Settings = L.Control.extend({
                 onAdd: function(map) {
                     const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-settings');
@@ -277,7 +252,6 @@
             });
             new L.Control.Settings({ position: 'topright' }).addTo(map);
 
-            // Mobile View knop
             L.Control.MobileView = L.Control.extend({
                 onAdd: function(map) {
                     const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-mobile-view');
@@ -299,91 +273,59 @@
         function handleGeocodeResult(geocode) {
             const { center, name } = geocode;
             map.setView(center, 8);
-            addPin(center, settings.pinColor, settings.pinSize); // Voeg pin toe
+            // Bij het toevoegen van een nieuwe pin, gebruiken we de huidige settings
+            addPin(center, settings.pinColor, settings.pinSize); 
         }
 
-        // --- Nieuwe functie: Pin toevoegen en opslaan ---
+        // --- Nieuwe functie: Pin toevoegen en opslaan (met de initiële settings) ---
         function addPin(latlng, color, size) {
-            const svgWidth = size;
-            const svgHeight = size * 1.5;
-            const circleRadius = size / 2;
-            const circleCenterY = circleRadius;
-            const pointX = size / 2;
-            const pointY = svgHeight;
-            // iconSize, iconX, iconY zijn nu voor de interne cirkel
-            const iconSizeInnerCircle = size * 0.2; // Grootte van de witte cirkel in de pin
-            const iconX = size / 2;
-            const iconY = size / 2 + (size * 0.05);
-
-            const pinIconHtml = `
-                <div class="custom-pin-svg-container" style="width: ${svgWidth}px; height: ${svgHeight}px;">
-                    <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="${circleRadius}" cy="${circleCenterY}" r="${circleRadius}" fill="${color}"/>
-                        <path d="M${pointX},${circleRadius} Q${pointX - circleRadius/2},${circleRadius*1.5} ${pointX},${pointY} Q${pointX + circleRadius/2},${circleRadius*1.5} ${pointX},${circleRadius} Z" fill="${color}"/>
-                        
-                        <circle cx="${iconX}" cy="${iconY}" r="${iconSizeInnerCircle}" fill="white"/>
-                    </svg>
-                </div>`;
-
-            const iconAnchorX = pointX;
-            const iconAnchorY = pointY;
-
-            const pinIcon = L.divIcon({
-                className: '',
-                html: pinIconHtml,
-                iconSize: [svgWidth, svgHeight],
-                iconAnchor: [iconAnchorX, iconAnchorY] 
-            });
-
-            // Maak de marker en voeg deze toe aan de kaart
-            const marker = L.marker(latlng, { icon: pinIcon }).addTo(map);
+            // Maak de marker aan met de opgegeven kleur en grootte
+            const marker = createPinMarker(latlng, color, size);
+            marker.addTo(map);
 
             const pinData = {
                 lat: latlng.lat,
                 lng: latlng.lng,
-                color: color,
-                size: size,
-                markerId: L.Util.stamp(marker), // Geef de marker een unieke ID
-                firebaseDocId: null // Tijdelijke placeholder voor Firebase document ID
+                // Deze kleur en grootte worden OPGESLAGEN in de database.
+                // Ze vertegenwoordigen de initiële weergave.
+                color: color, 
+                size: size, 
+                markerId: L.Util.stamp(marker), 
+                firebaseDocId: null 
             };
             savedPins.push(pinData);
-            savePinsToBackend(pinData); // Sla de nieuwe pin direct op.
+            leafletMarkers[pinData.markerId] = marker; // Opslaan voor snelle toegang
 
-            // Zoek het land op en kleur het in
+            savePinToFirestore(pinData); // Opslaan in Firestore
+
             const countryName = getCountryNameForLatLng(latlng);
             if (countryName) {
                 highlightCountry(countryName);
             }
 
-            // Voeg een click listener toe om de pin te kunnen verwijderen
             marker.on('click', function(e) {
                 if (confirm('Wil je deze pin verwijderen?')) {
-                    removePin(pinData.markerId); // Verwijder op basis van ID
+                    removePin(pinData.markerId); 
                 }
             });
         }
 
-        // --- Pin verwijderen en opslaan ---
+        // --- Pin verwijderen ---
         async function removePin(markerIdToRemove) {
-            // Vind de pin data en de marker die verwijderd moet worden
             const indexToRemove = savedPins.findIndex(pin => pin.markerId === markerIdToRemove);
-            if (indexToRemove === -1) return; // Pin niet gevonden
+            if (indexToRemove === -1) return;
 
             const pinDataToRemove = savedPins[indexToRemove];
             
             // Verwijder de marker van de kaart
-            map.eachLayer(function(layer) {
-                if (layer instanceof L.Marker && L.Util.stamp(layer) === markerIdToRemove) {
-                    map.removeLayer(layer);
-                    return false; // Stop de iteratie
-                }
-            });
+            if (leafletMarkers[markerIdToRemove]) {
+                map.removeLayer(leafletMarkers[markerIdToRemove]);
+                delete leafletMarkers[markerIdToRemove];
+            }
 
-            // Verwijder de pin uit de savedPins array
             savedPins.splice(indexToRemove, 1);
             
-            // Verwijder de pin ook uit Firestore
-            if (pinDataToRemove.firebaseDocId) { // Geen `window.db` nodig hier omdat `db` globaal is in deze module
+            if (pinDataToRemove.firebaseDocId) {
                 try {
                     await deleteDoc(doc(db, "pins", pinDataToRemove.firebaseDocId));
                     console.log("Pin succesvol verwijderd uit Firestore.");
@@ -394,14 +336,12 @@
                 console.warn("Geen Firebase document ID gevonden voor verwijderde pin.");
             }
 
-            // Controleer of er nog pins in het land van de verwijderde pin zijn
             const countryNameOfRemovedPin = getCountryNameForLatLng(L.latLng(pinDataToRemove.lat, pinDataToRemove.lng));
             if (countryNameOfRemovedPin) {
                 const remainingPinsInCountry = savedPins.filter(pin => 
                     getCountryNameForLatLng(L.latLng(pin.lat, pin.lng)) === countryNameOfRemovedPin
                 );
                 if (remainingPinsInCountry.length === 0) {
-                    // Geen pins meer in dit land, dus ontkleur het
                     removeHighlightedCountry(countryNameOfRemovedPin);
                 }
             }
@@ -411,31 +351,30 @@
         function getCountryNameForLatLng(latlng) {
             const point = turf.point([latlng.lng, latlng.lat]);
             let foundCountryName = null;
-            if (geoJsonLayer) { // Zorg dat geoJsonLayer geladen is
+            if (geoJsonLayer) { 
                 geoJsonLayer.eachLayer(layer => {
                     const isInside = turf.booleanPointInPolygon(point, layer.toGeoJSON());
                     if (isInside) {
-                        foundCountryName = layer.feature.properties.name; // 'name' is vaak de property voor landnaam
-                        return false; // Stop iteratie zodra gevonden
+                        foundCountryName = layer.feature.properties.name; 
+                        return false; 
                     }
                 });
             }
             return foundCountryName;
         }
 
-        // --- Pins opslaan naar Firestore (addPin roept deze aan) ---
-        // Deze functie slaat één nieuwe pin op. ClearAllPins roept een andere aan.
-        async function savePinsToBackend(pinData) {
+        // --- Pin opslaan naar Firestore (dit is alleen voor de initiële opslag!) ---
+        async function savePinToFirestore(pinData) {
             try {
                 const countryName = getCountryNameForLatLng(L.latLng(pinData.lat, pinData.lng));
-                const docRef = await addDoc(collection(db, "pins"), { // Gebruik `db` en `collection` direct
+                const docRef = await addDoc(collection(db, "pins"), {
                     lat: pinData.lat,
                     lng: pinData.lng,
-                    color: pinData.color,
-                    size: pinData.size,
+                    color: pinData.color, // Opslaan van de initiële kleur
+                    size: pinData.size,   // Opslaan van de initiële grootte
                     countryName: countryName || ''
                 });
-                pinData.firebaseDocId = docRef.id; // Sla de document ID op in de lokale pin data
+                pinData.firebaseDocId = docRef.id; 
                 console.log('Pin succesvol opgeslagen in Firestore met ID:', docRef.id);
             } catch (error) {
                 console.error('Fout bij opslaan pin in Firestore:', error);
@@ -445,41 +384,45 @@
         // --- Pins laden van Firestore ---
         async function loadPinsFromBackend() {
             try {
-                const querySnapshot = await getDocs(collection(db, "pins")); // Gebruik `db` en `collection` direct
-                savedPins = []; // Wis huidige pins voor laden
+                const querySnapshot = await getDocs(collection(db, "pins"));
                 
-                // Verwijder eerst alle bestaande markers van de kaart
+                // Wis alle huidige markers en gewiste landen
                 map.eachLayer(function(layer) {
                     if (layer instanceof L.Marker) {
                         map.removeLayer(layer);
                     }
                 });
-                // Verwijder ook alle ingekleurde landen
+                savedPins = []; 
+                leafletMarkers = {}; // Leeg de marker referentie object
                 clearAllHighlightedCountries(true); 
 
                 querySnapshot.forEach(doc => {
                     const pin = doc.data();
                     const latlng = L.latLng(pin.lat, pin.lng);
-                    const marker = createPinMarker(latlng, pin.color, pin.size); // Helper functie om marker te maken
+                    
+                    // BELANGRIJK: Gebruik de LOKALE settings voor kleur en grootte bij het creëren van de marker!
+                    // De database waarden (pin.color, pin.size) worden nu genegeerd voor de WEERGAVE.
+                    const marker = createPinMarker(latlng, settings.pinColor, settings.pinSize); 
                     marker.addTo(map);
 
                     const pinData = {
                         lat: pin.lat,
                         lng: pin.lng,
-                        color: pin.color,
-                        size: pin.size,
+                        // Bewaar de oorspronkelijke kleur en grootte uit de database voor als je het nodig hebt,
+                        // maar de rendering gebruikt 'settings.pinColor' en 'settings.pinSize'
+                        originalColor: pin.color, 
+                        originalSize: pin.size,
                         markerId: L.Util.stamp(marker),
-                        firebaseDocId: doc.id // Sla de Firebase document ID op
+                        firebaseDocId: doc.id 
                     };
                     savedPins.push(pinData);
+                    leafletMarkers[pinData.markerId] = marker; // Sla de marker op
 
-                    // Zoek het land op en kleur het in
                     const countryName = getCountryNameForLatLng(latlng);
                     if (countryName) {
                         highlightCountry(countryName);
                     }
 
-                    // Voeg click listener toe voor verwijderen
                     marker.on('click', function(e) {
                         if (confirm('Wil je deze pin verwijderen?')) {
                             removePin(pinData.markerId); 
@@ -493,22 +436,23 @@
         }
 
         // Helper functie om de marker HTML/CSS te creëren
-        function createPinMarker(latlng, color, size) {
-            const svgWidth = size;
-            const svgHeight = size * 1.5;
-            const circleRadius = size / 2;
+        // Deze functie krijgt de kleur en grootte als argumenten die de marker daadwerkelijk gebruikt.
+        function createPinMarker(latlng, colorToUse, sizeToUse) {
+            const svgWidth = sizeToUse;
+            const svgHeight = sizeToUse * 1.5;
+            const circleRadius = sizeToUse / 2;
             const circleCenterY = circleRadius;
-            const pointX = size / 2;
+            const pointX = sizeToUse / 2;
             const pointY = svgHeight;
-            const iconSizeInnerCircle = size * 0.2;
-            const iconX = size / 2;
-            const iconY = size / 2 + (size * 0.05);
+            const iconSizeInnerCircle = sizeToUse * 0.2;
+            const iconX = sizeToUse / 2;
+            const iconY = sizeToUse / 2 + (sizeToUse * 0.05);
 
             const pinIconHtml = `
                 <div class="custom-pin-svg-container" style="width: ${svgWidth}px; height: ${svgHeight}px;">
                     <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="${circleRadius}" cy="${circleCenterY}" r="${circleRadius}" fill="${color}"/>
-                        <path d="M${pointX},${circleRadius} Q${pointX - circleRadius/2},${circleRadius*1.5} ${pointX},${pointY} Q${pointX + circleRadius/2},${circleRadius*1.5} ${pointX},${circleRadius} Z" fill="${color}"/>
+                        <circle cx="${circleRadius}" cy="${circleCenterY}" r="${circleRadius}" fill="${colorToUse}"/>
+                        <path d="M${pointX},${circleRadius} Q${pointX - circleRadius/2},${circleRadius*1.5} ${pointX},${pointY} Q${pointX + circleRadius/2},${circleRadius*1.5} ${pointX},${circleRadius} Z" fill="${colorToUse}"/>
                         <circle cx="${iconX}" cy="${iconY}" r="${iconSizeInnerCircle}" fill="white"/>
                     </svg>
                 </div>`;
@@ -526,22 +470,49 @@
             });
         }
 
+        // NIEUW: Functie om alle pins op de kaart bij te werken met de huidige settings
+        function updateAllPinsOnMap() {
+            // Verwijder alle bestaande markers van de kaart
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.Marker) {
+                    map.removeLayer(layer);
+                }
+            });
+            leafletMarkers = {}; // Leeg de marker referentie object
+
+            // Voeg alle pins opnieuw toe met de huidige `settings.pinColor` en `settings.pinSize`
+            savedPins.forEach(pinData => {
+                const latlng = L.latLng(pinData.lat, pinData.lng);
+                const marker = createPinMarker(latlng, settings.pinColor, settings.pinSize); // Gebruik LOKALE settings
+                marker.addTo(map);
+
+                // Update de referentie in leafletMarkers
+                leafletMarkers[pinData.markerId] = marker;
+
+                // Herbevestig de click listener
+                marker.on('click', function(e) {
+                    if (confirm('Wil je deze pin verwijderen?')) {
+                        removePin(pinData.markerId); 
+                    }
+                });
+            });
+        }
+
 
         // --- Wis alle pins (knop) ---
         async function clearAllPins() {
             if (confirm('Weet je zeker dat je ALLE pins wilt verwijderen?')) {
-                // Verwijder alle markers van de kaart
                 map.eachLayer(function(layer) {
                     if (layer instanceof L.Marker) {
                         map.removeLayer(layer);
                     }
                 });
-                savedPins = []; // Leeg de array
+                savedPins = []; 
+                leafletMarkers = {}; // Leeg de marker referentie object
 
-                // Verwijder ook alle pins uit Firestore
                 try {
-                    const batch = writeBatch(db); // Gebruik `db` en `writeBatch` direct
-                    const snapshot = await getDocs(collection(db, "pins")); // Gebruik `db` en `collection` direct
+                    const batch = writeBatch(db);
+                    const snapshot = await getDocs(collection(db, "pins"));
                     snapshot.docs.forEach((doc) => {
                         batch.delete(doc.ref);
                     });
@@ -551,14 +522,13 @@
                     console.error("Fout bij verwijderen van alle pins uit Firestore:", error);
                 }
                 
-                clearAllHighlightedCountries(true); // Verwijder ook alle ingekleurde landen, zonder extra prompt
+                clearAllHighlightedCountries(true); 
             }
         }
 
         // --- Land Inkleuren en Opslaan in Set ---
         function highlightCountry(countryName) {
             if (!countryName || highlightedCountryLayers[countryName]) {
-                // Land is al ingekleurd of ongeldige naam
                 return;
             }
 
@@ -572,9 +542,9 @@
                                 fillOpacity: 0.5
                             }
                         }).addTo(map);
-                        highlightedCountryLayers[countryName] = countryGeoJson; // Sla de laag op per landnaam
-                        countriesWithPins.add(countryName); // Voeg toe aan de set van landen met pins
-                        return false; // Stop iteratie zodra gevonden
+                        highlightedCountryLayers[countryName] = countryGeoJson;
+                        countriesWithPins.add(countryName);
+                        return false; 
                     }
                 });
             } else {
@@ -586,8 +556,8 @@
         function removeHighlightedCountry(countryName) {
             if (highlightedCountryLayers[countryName]) {
                 map.removeLayer(highlightedCountryLayers[countryName]);
-                delete highlightedCountryLayers[countryName]; // Verwijder uit het object
-                countriesWithPins.delete(countryName); // Verwijder uit de set
+                delete highlightedCountryLayers[countryName]; 
+                countriesWithPins.delete(countryName); 
             }
         }
 
@@ -597,8 +567,8 @@
                 for (const countryName in highlightedCountryLayers) {
                     map.removeLayer(highlightedCountryLayers[countryName]);
                 }
-                highlightedCountryLayers = {}; // Leeg het object
-                countriesWithPins.clear(); // Leeg de set
+                highlightedCountryLayers = {}; 
+                countriesWithPins.clear(); 
             }
         }
 
@@ -683,17 +653,19 @@
             const clearPinsButton = document.getElementById('clear-pins-button');
             const clearHighlightedCountriesButton = document.getElementById('clear-highlighted-countries-button');
 
+            // Wanneer kleur of grootte van de pin wordt gewijzigd, update ALLE pins op de kaart
             pinColorInput.addEventListener('input', (e) => {
                 settings.pinColor = e.target.value;
+                updateAllPinsOnMap(); // Roep de nieuwe update-functie aan
             });
 
             pinSizeInput.addEventListener('input', (e) => {
                 settings.pinSize = parseInt(e.target.value, 10);
+                updateAllPinsOnMap(); // Roep de nieuwe update-functie aan
             });
 
             countryColorInput.addEventListener('input', (e) => {
                 settings.countryColor = e.target.value;
-                // Update de kleur van alle *actief* ingekleurde lagen
                 for (const countryName in highlightedCountryLayers) {
                     highlightedCountryLayers[countryName].setStyle({ color: settings.countryColor });
                 }
@@ -704,7 +676,6 @@
         }
         
         // --- Plugin voor Volledig Scherm ---
-        // Bron: https://github.com/Leaflet/Leaflet.fullscreen
         L.Control.Fullscreen = L.Control.extend({
             options: {
                 position: 'topright',
@@ -750,7 +721,7 @@
                     } else if (document.mozCancelFullScreen) {
                         document.mozCancelFullScreen();
                     } else if (document.webkitCancelFullScreen) {
-                        document.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
+                        container.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
                     } else if (document.msRequestFullscreen) {
                         container.msRequestFullscreen();
                     } else {
@@ -820,7 +791,7 @@
             document.addEventListener('msfullscreenchange', fullscreenchange);
         });
 
-        // Start de applicatie - dit wordt nu direct in de module uitgevoerd
+        // Start de applicatie
         initializeMap();
     </script>
 
