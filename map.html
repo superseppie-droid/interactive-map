@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
     
     <style>
-        /* Basisstijlen */
+        /* Your existing CSS here */
         body, html {
             margin: 0;
             padding: 0;
@@ -149,8 +149,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
 
     <script type="module">
+        // Importeer de benodigde Firebase functies
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js"; // Firestore imports
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+        // import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js"; // Optioneel
 
         // Jouw web app's Firebase configuration
         const firebaseConfig = {
@@ -163,39 +165,41 @@
             measurementId: "G-DWPFR0PZ7H"
         };
 
-        // Initialize Firebase
+        // Initialiseer Firebase
         const app = initializeApp(firebaseConfig);
-        // const analytics = getAnalytics(app); // Optioneel, alleen als je Analytics gebruikt
+        // const analytics = getAnalytics(app); // Optioneel
 
         // Krijg een referentie naar de Firestore-service
         const db = getFirestore(app);
 
-        // --- Globale Variabelen ---
-        // Let op: 'let' variabelen moeten binnen de scope van de module script gedefinieerd worden.
-        // Echter, voor globale toegang door je andere scripts, is het handiger
-        // om een globaal object te maken en daar de db in te stoppen, of de functies te exporteren.
-        // Voor nu, laten we de db variabele globaal beschikbaar maken via window.
-        window.db = db; // Maak de Firestore instantie globaal toegankelijk
-        window.initializeMapApp = initializeMapApp; // Maak de initiële functie globaal
+        // MAAK DEZE REFERENTIES NU GLOBAAL BESCHIKBAAR VIA WINDOW
+        window.db = db;
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.deleteDoc = deleteDoc;
+        window.doc = doc;
+        window.writeBatch = writeBatch;
 
-        // De rest van je kaartlogica gaat hier
-        // We moeten de hele kaartlogica verplaatsen of een manier vinden om db hier te gebruiken.
-        // De eenvoudigste manier is om de hoofdlogica in deze module te plaatsen.
-        // Of, zoals hierboven, `window.db = db;` te gebruiken, en de rest van de code in een normale script tag te houden.
-        // Laten we voor de eenvoudigste route gaan: `window.db = db;` en je huidige script behouden.
-        // Zorg ervoor dat dit scriptblok BOVEN je hoofdscript komt, zodat `db` beschikbaar is.
-    </script>
+        // Roep de globale initialisatiefunctie van de kaart aan ZODRA deze module geladen is
+        // Deze functie moet dan wel in een reguliere script tag gedefinieerd zijn
+        // en in de DOM bestaan voordat deze module is geladen (dus, de script tag komt eerder).
+        // Of, we voeren de initialisatie direct hier uit. Laten we dat doen.
+        // We moeten dan WEL alle globale variabelen en functies hierin definiëren of importeren.
+        // HET EENVOUDIGSTE IS OM ALLE KAARTLOGICA BINNEN DEZE MODULE TE PLAATSEN.
+        // Daarmee vermijd je alle timing en `window` trucjes.
 
+        // Hieronder volgt de **hele kaartlogica** die eerder in de andere script tag stond.
+        // Alle functies en variabelen zijn nu lokaal voor deze module, tenzij expliciet aan `window` gehangen.
 
-    <script>
-        // --- Globale Variabelen ---
+        // --- Globale Variabelen voor de Kaart (nu lokaal in de module) ---
         let map;
-        let geoJsonLayer; // De basislaag met alle landgrenzen
-        let highlightedCountryLayers = {}; // Object om actieve ingekleurde lagen bij te houden {countryName: L.GeoJSON}
+        let geoJsonLayer; 
+        let highlightedCountryLayers = {}; 
         let geocoderControl; 
         let isMobileViewActive = false;
-        let savedPins = []; // Array om opgeslagen pins bij te houden
-        let countriesWithPins = new Set(); // Set om namen van landen met pins bij te houden
+        let savedPins = []; 
+        let countriesWithPins = new Set(); 
 
         const settings = {
             pinColor: '#ff4b4b',
@@ -343,7 +347,7 @@
                 firebaseDocId: null // Tijdelijke placeholder voor Firebase document ID
             };
             savedPins.push(pinData);
-            savePinsToBackend(pinData); // <-- Aangepast! Sla de nieuwe pin direct op.
+            savePinsToBackend(pinData); // Sla de nieuwe pin direct op.
 
             // Zoek het land op en kleur het in
             const countryName = getCountryNameForLatLng(latlng);
@@ -379,15 +383,15 @@
             savedPins.splice(indexToRemove, 1);
             
             // Verwijder de pin ook uit Firestore
-            if (pinDataToRemove.firebaseDocId && window.db) {
+            if (pinDataToRemove.firebaseDocId) { // Geen `window.db` nodig hier omdat `db` globaal is in deze module
                 try {
-                    await deleteDoc(doc(window.db, "pins", pinDataToRemove.firebaseDocId));
+                    await deleteDoc(doc(db, "pins", pinDataToRemove.firebaseDocId));
                     console.log("Pin succesvol verwijderd uit Firestore.");
                 } catch (error) {
                     console.error("Fout bij verwijderen pin uit Firestore:", error);
                 }
             } else {
-                console.warn("Geen Firebase document ID gevonden voor verwijderde pin of Firestore niet geïnitialiseerd.");
+                console.warn("Geen Firebase document ID gevonden voor verwijderde pin.");
             }
 
             // Controleer of er nog pins in het land van de verwijderde pin zijn
@@ -422,13 +426,9 @@
         // --- Pins opslaan naar Firestore (addPin roept deze aan) ---
         // Deze functie slaat één nieuwe pin op. ClearAllPins roept een andere aan.
         async function savePinsToBackend(pinData) {
-            if (!window.db) {
-                console.error("Firestore is nog niet geïnitialiseerd.");
-                return;
-            }
             try {
                 const countryName = getCountryNameForLatLng(L.latLng(pinData.lat, pinData.lng));
-                const docRef = await addDoc(collection(window.db, "pins"), {
+                const docRef = await addDoc(collection(db, "pins"), { // Gebruik `db` en `collection` direct
                     lat: pinData.lat,
                     lng: pinData.lng,
                     color: pinData.color,
@@ -444,12 +444,8 @@
 
         // --- Pins laden van Firestore ---
         async function loadPinsFromBackend() {
-            if (!window.db) {
-                console.error("Firestore is nog niet geïnitialiseerd.");
-                return;
-            }
             try {
-                const querySnapshot = await getDocs(collection(window.db, "pins"));
+                const querySnapshot = await getDocs(collection(db, "pins")); // Gebruik `db` en `collection` direct
                 savedPins = []; // Wis huidige pins voor laden
                 
                 // Verwijder eerst alle bestaande markers van de kaart
@@ -533,10 +529,6 @@
 
         // --- Wis alle pins (knop) ---
         async function clearAllPins() {
-            if (!window.db) {
-                console.error("Firestore is nog niet geïnitialiseerd.");
-                return;
-            }
             if (confirm('Weet je zeker dat je ALLE pins wilt verwijderen?')) {
                 // Verwijder alle markers van de kaart
                 map.eachLayer(function(layer) {
@@ -548,8 +540,8 @@
 
                 // Verwijder ook alle pins uit Firestore
                 try {
-                    const batch = writeBatch(window.db); // Gebruik een batch voor efficiëntie
-                    const snapshot = await getDocs(collection(window.db, "pins"));
+                    const batch = writeBatch(db); // Gebruik `db` en `writeBatch` direct
+                    const snapshot = await getDocs(collection(db, "pins")); // Gebruik `db` en `collection` direct
                     snapshot.docs.forEach((doc) => {
                         batch.delete(doc.ref);
                     });
@@ -828,7 +820,7 @@
             document.addEventListener('msfullscreenchange', fullscreenchange);
         });
 
-        // Start de applicatie
+        // Start de applicatie - dit wordt nu direct in de module uitgevoerd
         initializeMap();
     </script>
 
