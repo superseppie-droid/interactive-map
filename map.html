@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactieve Kaart Applicatie</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    
+    <style>
+        /* Basisstijlen */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+            overflow: hidden; /* Voorkom scrollbalken door absolute posities */
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+            background-color: #f0f0f0;
+        }
+
+        /* Stijl voor de SVG-pin container */
+        .custom-pin-svg-container {
+            display: block; /* Zorgt dat de divIcon zichzelf correct gedraagt */
+            background-color: transparent; /* Zorgt dat de achtergrond van de container transparant is */
+        }
+
+        /* Stijlen voor het instellingenmenu */
+        .settings-panel {
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none; /* Standaard verborgen */
+            width: 220px;
+        }
+
+        .settings-panel h3 {
+            margin-top: 0;
+            font-size: 16px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+        }
+
+        .settings-panel label {
+            display: block;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .settings-panel input[type="color"],
+        .settings-panel input[type="range"] {
+            width: 100%;
+            margin-top: 5px;
+        }
+
+        /* Stijl voor de instellingenknop en mobile view knop */
+        .leaflet-bar a.settings-control,
+        .leaflet-bar a.mobile-view-control {
+            font-size: 1.4em;
+            line-height: 1.4;
+            text-align: center;
+        }
+
+        /* Verbergt Leaflet controles */
+        .leaflet-control-container.hidden {
+            display: none !important;
+        }
+
+        /* Verbergt specifieke Leaflet control knoppen */
+        .leaflet-control-geocoder.hidden,
+        .leaflet-control-fullscreen.hidden,
+        .leaflet-control-settings.hidden,
+        .leaflet-control-mobile-view.hidden {
+            display: none !important;
+        }
+
+        /* Zorg dat het instellingenpaneel verborgen wordt in mobile view */
+        .settings-panel.hidden {
+            display: none !important;
+        }
+
+        /* Stijl voor de "Wis Pins" knop */
+        .clear-pins-button {
+            display: block;
+            width: 100%;
+            padding: 8px;
+            margin-top: 15px;
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .clear-pins-button:hover {
+            background-color: #c82333;
+        }
+
+        /* Stijl voor "Wis Landen" knop (aangepast voor alle landen) */
+        .clear-country-button {
+            display: block;
+            width: 100%;
+            padding: 8px;
+            margin-top: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .clear-country-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div id="settings-panel" class="settings-panel">
+        <h3>Instellingen</h3>
+        
+        <label for="pin-color">Kleur van de pin:</label>
+        <input type="color" id="pin-color" value="#ff4b4b">
+
+        <label for="pin-size">Grootte van de pin:</label>
+        <input type="range" id="pin-size" min="5" max="80" value="40">
+
+        <label for="country-color">Kleur van het land:</label>
+        <input type="color" id="country-color" value="#3388ff">
+
+        <button id="clear-pins-button" class="clear-pins-button">Wis Alle Pins</button>
+        <button id="clear-highlighted-countries-button" class="clear-country-button">Wis Alle Ingekleurde Landen</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+
+    <script>
+        // --- Globale Variabelen ---
+        let map;
+        let geoJsonLayer; // De basislaag met alle landgrenzen
+        let highlightedCountryLayers = {}; // Object om actieve ingekleurde lagen bij te houden {countryName: L.GeoJSON}
+        let geocoderControl; 
+        let isMobileViewActive = false;
+        let savedPins = []; // Array om opgeslagen pins bij te houden
+        let countriesWithPins = new Set(); // Set om namen van landen met pins bij te houden
+
+        // JOUW GOOGLE APPS SCRIPT WEB-APP URL HIER
+        const webAppUrl = 'https://script.google.com/macros/s/AKfycbztPljEYo9KCAIAj6DMpN1UUeEUPPZIqA9HGmEx67KJBBrQRsQDqpIFWr_FcpX7_obo/exec';
+
+        const settings = {
+            pinColor: '#ff4b4b',
+            pinSize: 40,
+            countryColor: '#3388ff'
+        };
+
+        // --- Initialisatie van de Kaart ---
+        function initializeMap() {
+            map = L.map('map').setView([51.505, -0.09], 4);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            loadCountries();
+            addControls();
+            setupEventListeners();
+            addGlobalCloseListeners();
+        }
+        
+        // --- Landen laden met GeoJSON ---
+        async function loadCountries() {
+            try {
+                const response = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json');
+                const geoJsonData = await response.json();
+                geoJsonLayer = L.geoJson(geoJsonData, {
+                    style: {
+                        weight: 1,
+                        color: '#555',
+                        fillOpacity: 0
+                    }
+                }).addTo(map);
+
+                // Nu landen geladen zijn, kunnen we opgeslagen pins en landen laden van de backend
+                loadPinsFromBackend(); 
+                // loadHighlightedCountriesFromLocalStorage();  <-- Deze is niet meer nodig als backend alles beheert
+            } catch (error) {
+                console.error("Fout bij het laden van landengegevens:", error);
+            }
+        }
+
+        // --- Besturingselementen Toevoegen ---
+        function addControls() {
+            // Zoekbalk
+            const geocoder = L.Control.Geocoder.nominatim();
+            geocoderControl = L.Control.geocoder({
+                geocoder: geocoder,
+                defaultMarkGeocode: false,
+                placeholder: 'Zoek een locatie...',
+                errorMessage: 'Locatie niet gevonden.'
+            })
+            .on('markgeocode', function(e) {
+                handleGeocodeResult(e.geocode);
+                closeGeocoderPanel();
+            })
+            .addTo(map);
+
+            // Volledig scherm knop
+            map.addControl(new L.Control.Fullscreen());
+
+            // Instellingenknop
+            L.Control.Settings = L.Control.extend({
+                onAdd: function(map) {
+                    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-settings');
+                    const button = L.DomUtil.create('a', 'leaflet-control-button settings-control', container);
+                    button.innerHTML = '⚙️';
+                    button.href = '#';
+                    button.role = 'button';
+                    button.title = 'Instellingen';
+
+                    L.DomEvent.on(button, 'click', L.DomEvent.stop)
+                                  .on(button, 'click', toggleSettingsPanel);
+                    return container;
+                }
+            });
+            new L.Control.Settings({ position: 'topright' }).addTo(map);
+
+            // Mobile View knop
+            L.Control.MobileView = L.Control.extend({
+                onAdd: function(map) {
+                    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-mobile-view');
+                    const button = L.DomUtil.create('a', 'leaflet-control-button mobile-view-control', container);
+                    button.innerHTML = '📱';
+                    button.href = '#';
+                    button.role = 'button';
+                    button.title = 'Mobiele Weergave';
+
+                    L.DomEvent.on(button, 'click', L.DomEvent.stop)
+                                  .on(button, 'click', toggleMobileView);
+                    return container;
+                }
+            });
+            new L.Control.MobileView({ position: 'topright' }).addTo(map);
+        }
+
+        // --- Functie voor Geocoding Resultaat ---
+        function handleGeocodeResult(geocode) {
+            const { center, name } = geocode;
+            map.setView(center, 8);
+            addPin(center, settings.pinColor, settings.pinSize); // Voeg pin toe
+        }
+
+        // --- Nieuwe functie: Pin toevoegen en opslaan ---
+        function addPin(latlng, color, size) {
+            const svgWidth = size;
+            const svgHeight = size * 1.5;
+            const circleRadius = size / 2;
+            const circleCenterY = circleRadius;
+            const pointX = size / 2;
+            const pointY = svgHeight;
+            // iconSize, iconX, iconY zijn nu voor de interne cirkel
+            const iconSizeInnerCircle = size * 0.2; // Grootte van de witte cirkel in de pin
+            const iconX = size / 2;
+            const iconY = size / 2 + (size * 0.05);
+
+            const pinIconHtml = `
+                <div class="custom-pin-svg-container" style="width: ${svgWidth}px; height: ${svgHeight}px;">
+                    <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="${circleRadius}" cy="${circleCenterY}" r="${circleRadius}" fill="${color}"/>
+                        <path d="M${pointX},${circleRadius} Q${pointX - circleRadius/2},${circleRadius*1.5} ${pointX},${pointY} Q${pointX + circleRadius/2},${circleRadius*1.5} ${pointX},${circleRadius} Z" fill="${color}"/>
+                        
+                        <circle cx="${iconX}" cy="${iconY}" r="${iconSizeInnerCircle}" fill="white"/>
+                    </svg>
+                </div>`;
+
+            const iconAnchorX = pointX;
+            const iconAnchorY = pointY;
+
+            const pinIcon = L.divIcon({
+                className: '',
+                html: pinIconHtml,
+                iconSize: [svgWidth, svgHeight],
+                iconAnchor: [iconAnchorX, iconAnchorY] 
+            });
+
+            // Maak de marker en voeg deze toe aan de kaart
+            const marker = L.marker(latlng, { icon: pinIcon }).addTo(map);
+
+            const pinData = {
+                lat: latlng.lat,
+                lng: latlng.lng,
+                color: color,
+                size: size,
+                markerId: L.Util.stamp(marker) // Geef de marker een unieke ID
+            };
+            savedPins.push(pinData);
+            savePinsToBackend(); // <-- Aangepast!
+
+            // Zoek het land op en kleur het in
+            const countryName = getCountryNameForLatLng(latlng);
+            if (countryName) {
+                highlightCountry(countryName);
+            }
+
+            // Voeg een click listener toe om de pin te kunnen verwijderen
+            marker.on('click', function(e) {
+                if (confirm('Wil je deze pin verwijderen?')) {
+                    removePin(pinData.markerId); // Verwijder op basis van ID
+                }
+            });
+        }
+
+        // --- Pin verwijderen en opslaan ---
+        function removePin(markerIdToRemove) {
+            // Vind de pin data en de marker die verwijderd moet worden
+            const indexToRemove = savedPins.findIndex(pin => pin.markerId === markerIdToRemove);
+            if (indexToRemove === -1) return; // Pin niet gevonden
+
+            const pinDataToRemove = savedPins[indexToRemove];
+            
+            // Verwijder de marker van de kaart
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.Marker && L.Util.stamp(layer) === markerIdToRemove) {
+                    map.removeLayer(layer);
+                    return false; // Stop de iteratie
+                }
+            });
+
+            // Verwijder de pin uit de savedPins array
+            savedPins.splice(indexToRemove, 1);
+            savePinsToBackend(); // <-- Aangepast!
+
+            // Controleer of er nog pins in het land van de verwijderde pin zijn
+            const countryNameOfRemovedPin = getCountryNameForLatLng(L.latLng(pinDataToRemove.lat, pinDataToRemove.lng));
+            if (countryNameOfRemovedPin) {
+                const remainingPinsInCountry = savedPins.filter(pin => 
+                    getCountryNameForLatLng(L.latLng(pin.lat, pin.lng)) === countryNameOfRemovedPin
+                );
+                if (remainingPinsInCountry.length === 0) {
+                    // Geen pins meer in dit land, dus ontkleur het
+                    removeHighlightedCountry(countryNameOfRemovedPin);
+                }
+            }
+        }
+
+        // --- Helper: Landnaam ophalen voor LatLng ---
+        function getCountryNameForLatLng(latlng) {
+            const point = turf.point([latlng.lng, latlng.lat]);
+            let foundCountryName = null;
+            if (geoJsonLayer) { // Zorg dat geoJsonLayer geladen is
+                geoJsonLayer.eachLayer(layer => {
+                    const isInside = turf.booleanPointInPolygon(point, layer.toGeoJSON());
+                    if (isInside) {
+                        foundCountryName = layer.feature.properties.name; // 'name' is vaak de property voor landnaam
+                        return false; // Stop iteratie zodra gevonden
+                    }
+                });
+            }
+            return foundCountryName;
+        }
+
+        // --- Pins opslaan naar Google Sheet via Apps Script ---
+        async function savePinsToBackend() {
+            try {
+                const pinsToSave = await Promise.all(savedPins.map(async pin => {
+                    const countryName = getCountryNameForLatLng(L.latLng(pin.lat, pin.lng));
+                    return {
+                        lat: pin.lat,
+                        lng: pin.lng,
+                        color: pin.color,
+                        size: pin.size,
+                        countryName: countryName || '' // Voeg landnaam toe aan opslag
+                    };
+                }));
+
+                const response = await fetch(webAppUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ action: 'savePins', pins: pinsToSave })
+                });
+                const result = await response.json();
+                if (result.status === 'success') {
+                    console.log('Pins succesvol opgeslagen in Google Sheet.');
+                } else {
+                    console.error('Fout bij opslaan pins:', result.message);
+                }
+            } catch (error) {
+                console.error('Fout bij communicatie met Apps Script (opslaan):', error);
+            }
+        }
+
+        // --- Pins laden van Google Sheet via Apps Script ---
+        async function loadPinsFromBackend() {
+            try {
+                const response = await fetch(webAppUrl, {
+                    method: 'POST', // We gebruiken POST omdat Apps Script doPost() dan aanroept
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ action: 'loadPins' })
+                });
+                const result = await response.json();
+                if (result.status === 'success' && result.pins) {
+                    savedPins = []; // Wis huidige pins voor laden
+                    
+                    // Verwijder eerst alle bestaande markers van de kaart
+                    map.eachLayer(function(layer) {
+                        if (layer instanceof L.Marker) {
+                            map.removeLayer(layer);
+                        }
+                    });
+                    // Verwijder ook alle ingekleurde landen
+                    clearAllHighlightedCountries(true); 
+
+                    // Voeg de geladen pins toe en laat addPin ze ook inkleuren
+                    result.pins.forEach(pin => {
+                        addPin(L.latLng(pin.lat, pin.lng), pin.color, pin.size);
+                    });
+                    console.log('Pins succesvol geladen van Google Sheet.');
+                } else {
+                    console.error('Fout bij laden pins:', result.message);
+                }
+            } catch (error) {
+                console.error('Fout bij communicatie met Apps Script (laden):', error);
+            }
+        }
+
+        // --- Wis alle pins (knop) ---
+        function clearAllPins() {
+            if (confirm('Weet je zeker dat je ALLE pins wilt verwijderen?')) {
+                // Verwijder alle markers van de kaart
+                map.eachLayer(function(layer) {
+                    if (layer instanceof L.Marker) {
+                        map.removeLayer(layer);
+                    }
+                });
+                savedPins = []; // Leeg de array
+                savePinsToBackend(); // <-- Aangepast! Sla de lege array op naar de backend
+                clearAllHighlightedCountries(true); // Verwijder ook alle ingekleurde landen, zonder extra prompt
+            }
+        }
+
+        // --- Land Inkleuren en Opslaan in Set ---
+        function highlightCountry(countryName) {
+            if (!countryName || highlightedCountryLayers[countryName]) {
+                // Land is al ingekleurd of ongeldige naam
+                return;
+            }
+
+            if (geoJsonLayer) {
+                geoJsonLayer.eachLayer(layer => {
+                    if (layer.feature.properties.name === countryName) {
+                        const countryGeoJson = L.geoJson(layer.toGeoJSON(), {
+                            style: {
+                                color: settings.countryColor,
+                                weight: 2,
+                                fillOpacity: 0.5
+                            }
+                        }).addTo(map);
+                        highlightedCountryLayers[countryName] = countryGeoJson; // Sla de laag op per landnaam
+                        countriesWithPins.add(countryName); // Voeg toe aan de set van landen met pins
+                        // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
+                        return false; // Stop iteratie zodra gevonden
+                    }
+                });
+            } else {
+                console.warn("geoJsonLayer is nog niet geladen bij inkleuren van land:", countryName);
+            }
+        }
+
+        // --- Land ontkleuren ---
+        function removeHighlightedCountry(countryName) {
+            if (highlightedCountryLayers[countryName]) {
+                map.removeLayer(highlightedCountryLayers[countryName]);
+                delete highlightedCountryLayers[countryName]; // Verwijder uit het object
+                countriesWithPins.delete(countryName); // Verwijder uit de set
+                // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
+            }
+        }
+
+        // --- Alle ingekleurde landen ontkleuren ---
+        function clearAllHighlightedCountries(skipConfirmation = false) {
+            if (skipConfirmation || confirm('Weet je zeker dat je ALLE ingekleurde landen wilt wissen?')) {
+                for (const countryName in highlightedCountryLayers) {
+                    map.removeLayer(highlightedCountryLayers[countryName]);
+                }
+                highlightedCountryLayers = {}; // Leeg het object
+                countriesWithPins.clear(); // Leeg de set
+                // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
+            }
+        }
+
+        // --- Opgeslagen landen opslaan in Local Storage (nu als array van namen) ---
+        // Deze functie is niet meer nodig, alle opslag gebeurt via de backend.
+        // function saveHighlightedCountriesToLocalStorage() {
+        //     localStorage.setItem('countriesWithPins', JSON.stringify(Array.from(countriesWithPins)));
+        // }
+
+        // --- Opgeslagen landen laden vanuit Local Storage ---
+        // Deze functie is niet meer nodig, loadPinsFromBackend() zal de landen automatisch inkleuren.
+        // function loadHighlightedCountriesFromLocalStorage() {
+        //     const storedCountries = localStorage.getItem('countriesWithPins');
+        //     if (storedCountries) {
+        //         const countryNames = JSON.parse(storedCountries);
+        //         countriesWithPins = new Set(countryNames); 
+        //         countriesWithPins.forEach(countryName => {
+        //             highlightCountry(countryName);
+        //         });
+        //     }
+        // }
+
+        // --- Instellingenpaneel Schakelen ---
+        function toggleSettingsPanel() {
+            const panel = document.getElementById('settings-panel');
+            if (panel.style.display === 'block') {
+                panel.style.display = 'none';
+            } else {
+                panel.style.display = 'block';
+                closeGeocoderPanel();
+            }
+        }
+
+        // --- Zoekpaneel sluiten ---
+        function closeGeocoderPanel() {
+            const geocoderContainer = document.querySelector('.leaflet-control-geocoder.leaflet-control');
+            if (geocoderContainer && geocoderControl._results && geocoderControl._container) {
+                geocoderControl._results.style.display = 'none';
+                if (geocoderControl._container.classList.contains('leaflet-control-geocoder-expanded')) {
+                    geocoderControl._collapse();
+                }
+            }
+        }
+
+        // --- Globale event listeners voor sluiten panelen ---
+        function addGlobalCloseListeners() {
+            document.addEventListener('click', (event) => {
+                const settingsPanel = document.getElementById('settings-panel');
+                const settingsButton = document.querySelector('.settings-control');
+                const geocoderControlElement = document.querySelector('.leaflet-control-geocoder');
+
+                if (settingsPanel.style.display === 'block' && 
+                    !settingsPanel.contains(event.target) && 
+                    !settingsButton.contains(event.target)) {
+                    settingsPanel.style.display = 'none';
+                }
+
+                if (geocoderControlElement && !geocoderControlElement.contains(event.target)) {
+                    closeGeocoderPanel();
+                }
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    document.getElementById('settings-panel').style.display = 'none';
+                    closeGeocoderPanel();
+                }
+            });
+        }
+
+        // --- Mobile View schakelen ---
+        function toggleMobileView() {
+            isMobileViewActive = !isMobileViewActive;
+            const controls = document.querySelectorAll('.leaflet-control');
+            const settingsPanel = document.getElementById('settings-panel');
+            const body = document.body;
+
+            if (isMobileViewActive) {
+                controls.forEach(control => {
+                    if (!control.classList.contains('leaflet-control-mobile-view')) {
+                        control.classList.add('hidden');
+                    }
+                });
+                settingsPanel.classList.add('hidden');
+                L.DomUtil.addClass(body, 'mobile-view-active');
+            } else {
+                controls.forEach(control => {
+                    control.classList.remove('hidden');
+                });
+                settingsPanel.classList.remove('hidden');
+                L.DomUtil.removeClass(body, 'mobile-view-active');
+            }
+            map.invalidateSize();
+        }
+
+        // --- Event Listeners voor Instellingen ---
+        function setupEventListeners() {
+            const pinColorInput = document.getElementById('pin-color');
+            const pinSizeInput = document.getElementById('pin-size');
+            const countryColorInput = document.getElementById('country-color');
+            const clearPinsButton = document.getElementById('clear-pins-button');
+            const clearHighlightedCountriesButton = document.getElementById('clear-highlighted-countries-button');
+
+            pinColorInput.addEventListener('input', (e) => {
+                settings.pinColor = e.target.value;
+            });
+
+            pinSizeInput.addEventListener('input', (e) => {
+                settings.pinSize = parseInt(e.target.value, 10);
+            });
+
+            countryColorInput.addEventListener('input', (e) => {
+                settings.countryColor = e.target.value;
+                // Update de kleur van alle *actief* ingekleurde lagen
+                for (const countryName in highlightedCountryLayers) {
+                    highlightedCountryLayers[countryName].setStyle({ color: settings.countryColor });
+                }
+            });
+
+            clearPinsButton.addEventListener('click', clearAllPins);
+            clearHighlightedCountriesButton.addEventListener('click', clearAllHighlightedCountries);
+        }
+        
+        // --- Plugin voor Volledig Scherm ---
+        // Bron: https://github.com/Leaflet/Leaflet.fullscreen
+        L.Control.Fullscreen = L.Control.extend({
+            options: {
+                position: 'topright',
+                title: {
+                    'false': 'Volledig scherm',
+                    'true': 'Verlaat volledig scherm'
+                }
+            },
+            onAdd: function (map) {
+                var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-fullscreen');
+                this.link = L.DomUtil.create('a', 'leaflet-control-fullscreen', container);
+                this.link.href = '#';
+                this.link.title = this.options.title['false'];
+                this.link.innerHTML = '⤡';
+
+                this._map.on('fullscreenchange', this._toggleTitle, this);
+                L.DomEvent.on(this.link, 'click', L.DomEvent.stop)
+                                  .on(this.link, 'click', this._click, this);
+
+                return container;
+            },
+            _click: function (e) {
+                L.DomEvent.stopPropagation(e);
+                L.DomEvent.preventDefault(e);
+                this._map.toggleFullscreen(this.options);
+            },
+            _toggleTitle: function() {
+                this.link.title = this.options.title[this._map.isFullscreen()];
+            }
+        });
+
+        L.Map.include({
+            isFullscreen: function () {
+                return this._isFullscreen || false;
+            },
+            toggleFullscreen: function (options) {
+                var container = this.getContainer();
+                if (this.isFullscreen()) {
+                    if (options && options.pseudoFullscreen) {
+                        this._disablePseudoFullscreen(container);
+                    } else if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        document.mozCancelFullScreen();
+                    } else if (document.webkitCancelFullScreen) {
+                        document.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
+                    } else if (document.msRequestFullscreen) {
+                        container.msRequestFullscreen();
+                    } else {
+                        this._disablePseudoFullscreen(container);
+                    }
+                } else {
+                    if (options && options.pseudoFullscreen) {
+                        this._enablePseudoFullscreen(container);
+                    } else if (container.requestFullscreen) {
+                        container.requestFullscreen();
+                    } else if (container.mozRequestFullScreen) {
+                        container.mozRequestFullScreen();
+                    } else if (container.webkitRequestFullscreen) {
+                        container.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
+                    } else if (container.msRequestFullscreen) {
+                        container.msRequestFullscreen();
+                    } else {
+                        this._enablePseudoFullscreen(container);
+                    }
+                }
+            },
+            _enablePseudoFullscreen: function (container) {
+                L.DomUtil.addClass(container, 'leaflet-pseudo-fullscreen');
+                this._setFullscreen(true);
+                this.fire('fullscreenchange');
+            },
+            _disablePseudoFullscreen: function (container) {
+                L.DomUtil.removeClass(container, 'leaflet-pseudo-fullscreen');
+                this._setFullscreen(false);
+                this.fire('fullscreenchange');
+            },
+            _setFullscreen: function(isFullscreen) {
+                this._isFullscreen = isFullscreen;
+                var container = this.getContainer();
+                if (isFullscreen) {
+                    L.DomUtil.addClass(container, 'leaflet-fullscreen-on');
+                } else {
+                    L.DomUtil.removeClass(container, 'leaflet-fullscreen-on');
+                }
+                this.invalidateSize();
+            },
+            _onFullscreenChange: function (e) {
+                var fullscreenElement = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+                if (fullscreenElement === this.getContainer() && !this.isFullscreen()) {
+                    this._setFullscreen(true);
+                    this.fire('fullscreenchange');
+                } else if (fullscreenElement !== this.getContainer() && this.isFullscreen()) {
+                    this._setFullscreen(false);
+                    this.fire('fullscreenchange');
+                }
+            }
+        });
+        
+        L.Map.mergeOptions({
+            fullscreenControl: false
+        });
+
+        L.Map.addInitHook(function () {
+            if (this.options.fullscreenControl) {
+                this.fullscreenControl = new L.Control.Fullscreen(this.options.fullscreenControl);
+                this.addControl(this.fullscreenControl);
+            }
+            var fullscreenchange = L.Util.bind(this._onFullscreenChange, this);
+            document.addEventListener('fullscreenchange', fullscreenchange);
+            document.addEventListener('mozfullscreenchange', fullscreenchange);
+            document.addEventListener('webkitfullscreenchange', fullscreenchange);
+            document.addEventListener('msfullscreenchange', fullscreenchange);
+        });
+
+        // Start de applicatie
+        initializeMap();
+    </script>
+
+</body>
+</html>
