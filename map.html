@@ -1,21 +1,21 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactieve Kaart Applicatie</title>
+    <title>Interactive Map Application</title>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
     
     <style>
-        /* Je bestaande CSS hier */
+        /* Base styles */
         body, html {
             margin: 0;
             padding: 0;
             height: 100%;
             font-family: Arial, sans-serif;
-            overflow: hidden; /* Voorkom scrollbalken door absolute posities */
+            overflow: hidden; /* Prevent scrollbars due to absolute positions */
         }
 
         #map {
@@ -24,13 +24,13 @@
             background-color: #f0f0f0;
         }
 
-        /* Stijl voor de SVG-pin container */
+        /* Style for the SVG pin container */
         .custom-pin-svg-container {
-            display: block; /* Zorgt dat de divIcon zichzelf correct gedraagt */
-            background-color: transparent; /* Zorgt dat de achtergrond van de container transparant is */
+            display: block; /* Ensures divIcon behaves correctly */
+            background-color: transparent; /* Ensures the container's background is transparent */
         }
 
-        /* Stijlen voor het instellingenmenu */
+        /* Styles for the settings menu */
         .settings-panel {
             position: absolute;
             top: 50px;
@@ -40,7 +40,7 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2);
             z-index: 1000;
-            display: none; /* Standaard verborgen */
+            display: none; /* Hidden by default */
             width: 220px;
         }
 
@@ -63,7 +63,7 @@
             margin-top: 5px;
         }
 
-        /* Stijl voor de instellingenknop en mobile view knop */
+        /* Style for the settings button and mobile view button */
         .leaflet-bar a.settings-control,
         .leaflet-bar a.mobile-view-control {
             font-size: 1.4em;
@@ -71,12 +71,12 @@
             text-align: center;
         }
 
-        /* Verbergt Leaflet controles */
+        /* Hides Leaflet controls */
         .leaflet-control-container.hidden {
             display: none !important;
         }
 
-        /* Verbergt specifieke Leaflet control knoppen */
+        /* Hides specific Leaflet control buttons */
         .leaflet-control-geocoder.hidden,
         .leaflet-control-fullscreen.hidden,
         .leaflet-control-settings.hidden,
@@ -84,12 +84,12 @@
             display: none !important;
         }
 
-        /* Zorg dat het instellingenpaneel verborgen wordt in mobile view */
+        /* Ensure the settings panel is hidden in mobile view */
         .settings-panel.hidden {
             display: none !important;
         }
 
-        /* Stijl voor de "Wis Pins" knop */
+        /* Style for the "Clear Pins" button */
         .clear-pins-button {
             display: block;
             width: 100%;
@@ -106,7 +106,7 @@
             background-color: #c82333;
         }
 
-        /* Stijl voor "Wis Landen" knop (aangepast voor alle landen) */
+        /* Style for "Clear Countries" button (adjusted for all countries) */
         .clear-country-button {
             display: block;
             width: 100%;
@@ -129,19 +129,19 @@
     <div id="map"></div>
     
     <div id="settings-panel" class="settings-panel">
-        <h3>Instellingen</h3>
+        <h3>Settings</h3>
         
-        <label for="pin-color">Kleur van de pin:</label>
+        <label for="pin-color">Pin Color:</label>
         <input type="color" id="pin-color" value="#ff4b4b">
 
-        <label for="pin-size">Grootte van de pin:</label>
+        <label for="pin-size">Pin Size:</label>
         <input type="range" id="pin-size" min="5" max="80" value="40">
 
-        <label for="country-color">Kleur van het land:</label>
+        <label for="country-color">Country Color:</label>
         <input type="color" id="country-color" value="#3388ff">
 
-        <button id="clear-pins-button" class="clear-pins-button">Wis Alle Pins</button>
-        <button id="clear-highlighted-countries-button" class="clear-country-button">Wis Alle Ingekleurde Landen</button>
+        <button id="clear-pins-button" class="clear-pins-button">Clear All Pins</button>
+        <button id="clear-highlighted-countries-button" class="clear-country-button">Clear All Highlighted Countries</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -152,7 +152,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
         import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
-        // Jouw web app's Firebase configuration
+        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyAfqMgsxeClqeMq0Sa_OK-iRai272-ubDM",
             authDomain: "mijninteractievekaart.firebaseapp.com",
@@ -163,30 +163,30 @@
             measurementId: "G-DWPFR0PZ7H"
         };
 
-        // Initialiseer Firebase
+        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // --- Globale Variabelen voor de Kaart ---
+        // --- Global Variables for the Map ---
         let map;
         let geoJsonLayer; 
         let highlightedCountryLayers = {}; 
         let geocoderControl; 
         let isMobileViewActive = false;
-        let savedPins = []; // Array om opgeslagen pins bij te houden
-        let countriesWithPins = new Set(); // Set om namen van landen met pins bij te houden
+        let savedPins = []; // Array to keep track of saved pins
+        let countriesWithPins = new Set(); // Set to keep track of country names with pins
 
-        // NIEUW: Bewaar een referentie naar de Leaflet marker objecten
+        // NEW: Store a reference to the Leaflet marker objects
         let leafletMarkers = {}; // {markerId: L.Marker object}
 
 
         const settings = {
-            pinColor: '#ff4b4b', // Initiële kleur voor nieuwe pins EN alle bestaande pins
-            pinSize: 40,         // Initiële grootte voor nieuwe pins EN alle bestaande pins
+            pinColor: '#ff4b4b', // Initial color for new pins AND all existing pins
+            pinSize: 40,         // Initial size for new pins AND all existing pins
             countryColor: '#3388ff'
         };
 
-        // --- Initialisatie van de Kaart ---
+        // --- Map Initialization ---
         function initializeMap() {
             map = L.map('map').setView([51.505, -0.09], 4);
 
@@ -200,7 +200,7 @@
             addGlobalCloseListeners();
         }
         
-        // --- Landen laden met GeoJSON ---
+        // --- Load Countries with GeoJSON ---
         async function loadCountries() {
             try {
                 const response = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json');
@@ -215,18 +215,18 @@
 
                 loadPinsFromBackend(); 
             } catch (error) {
-                console.error("Fout bij het laden van landengegevens:", error);
+                console.error("Error loading country data:", error);
             }
         }
 
-        // --- Besturingselementen Toevoegen ---
+        // --- Add Controls ---
         function addControls() {
             const geocoder = L.Control.Geocoder.nominatim();
             geocoderControl = L.Control.geocoder({
                 geocoder: geocoder,
                 defaultMarkGeocode: false,
-                placeholder: 'Zoek een locatie...',
-                errorMessage: 'Locatie niet gevonden.'
+                placeholder: 'Search for a location...',
+                errorMessage: 'Location not found.'
             })
             .on('markgeocode', function(e) {
                 handleGeocodeResult(e.geocode);
@@ -243,7 +243,7 @@
                     button.innerHTML = '⚙️';
                     button.href = '#';
                     button.role = 'button';
-                    button.title = 'Instellingen';
+                    button.title = 'Settings';
 
                     L.DomEvent.on(button, 'click', L.DomEvent.stop)
                                   .on(button, 'click', toggleSettingsPanel);
@@ -259,7 +259,7 @@
                     button.innerHTML = '📱';
                     button.href = '#';
                     button.role = 'button';
-                    button.title = 'Mobiele Weergave';
+                    button.title = 'Mobile View';
 
                     L.DomEvent.on(button, 'click', L.DomEvent.stop)
                                   .on(button, 'click', toggleMobileView);
@@ -269,34 +269,34 @@
             new L.Control.MobileView({ position: 'topright' }).addTo(map);
         }
 
-        // --- Functie voor Geocoding Resultaat ---
+        // --- Function for Geocoding Result ---
         function handleGeocodeResult(geocode) {
             const { center, name } = geocode;
             map.setView(center, 8);
-            // Bij het toevoegen van een nieuwe pin, gebruiken we de huidige settings
+            // When adding a new pin, we use the current settings
             addPin(center, settings.pinColor, settings.pinSize); 
         }
 
-        // --- Nieuwe functie: Pin toevoegen en opslaan (met de initiële settings) ---
+        // --- New function: Add and Save Pin (with initial settings) ---
         function addPin(latlng, color, size) {
-            // Maak de marker aan met de opgegeven kleur en grootte
+            // Create the marker with the specified color and size
             const marker = createPinMarker(latlng, color, size);
             marker.addTo(map);
 
             const pinData = {
                 lat: latlng.lat,
                 lng: latlng.lng,
-                // Deze kleur en grootte worden OPGESLAGEN in de database.
-                // Ze vertegenwoordigen de initiële weergave.
+                // This color and size are STORED in the database.
+                // They represent the initial display.
                 color: color, 
                 size: size, 
                 markerId: L.Util.stamp(marker), 
                 firebaseDocId: null 
             };
             savedPins.push(pinData);
-            leafletMarkers[pinData.markerId] = marker; // Opslaan voor snelle toegang
+            leafletMarkers[pinData.markerId] = marker; // Store for quick access
 
-            savePinToFirestore(pinData); // Opslaan in Firestore
+            savePinToFirestore(pinData); // Save to Firestore
 
             const countryName = getCountryNameForLatLng(latlng);
             if (countryName) {
@@ -304,20 +304,20 @@
             }
 
             marker.on('click', function(e) {
-                if (confirm('Wil je deze pin verwijderen?')) {
+                if (confirm('Do you want to remove this pin?')) {
                     removePin(pinData.markerId); 
                 }
             });
         }
 
-        // --- Pin verwijderen ---
+        // --- Remove Pin ---
         async function removePin(markerIdToRemove) {
             const indexToRemove = savedPins.findIndex(pin => pin.markerId === markerIdToRemove);
             if (indexToRemove === -1) return;
 
             const pinDataToRemove = savedPins[indexToRemove];
             
-            // Verwijder de marker van de kaart
+            // Remove the marker from the map
             if (leafletMarkers[markerIdToRemove]) {
                 map.removeLayer(leafletMarkers[markerIdToRemove]);
                 delete leafletMarkers[markerIdToRemove];
@@ -328,12 +328,12 @@
             if (pinDataToRemove.firebaseDocId) {
                 try {
                     await deleteDoc(doc(db, "pins", pinDataToRemove.firebaseDocId));
-                    console.log("Pin succesvol verwijderd uit Firestore.");
+                    console.log("Pin successfully removed from Firestore.");
                 } catch (error) {
-                    console.error("Fout bij verwijderen pin uit Firestore:", error);
+                    console.error("Error removing pin from Firestore:", error);
                 }
             } else {
-                console.warn("Geen Firebase document ID gevonden voor verwijderde pin.");
+                console.warn("No Firebase document ID found for removed pin.");
             }
 
             const countryNameOfRemovedPin = getCountryNameForLatLng(L.latLng(pinDataToRemove.lat, pinDataToRemove.lng));
@@ -347,7 +347,7 @@
             }
         }
 
-        // --- Helper: Landnaam ophalen voor LatLng ---
+        // --- Helper: Get Country Name for LatLng ---
         function getCountryNameForLatLng(latlng) {
             const point = turf.point([latlng.lng, latlng.lat]);
             let foundCountryName = null;
@@ -363,60 +363,60 @@
             return foundCountryName;
         }
 
-        // --- Pin opslaan naar Firestore (dit is alleen voor de initiële opslag!) ---
+        // --- Save Pin to Firestore (this is for initial storage only!) ---
         async function savePinToFirestore(pinData) {
             try {
                 const countryName = getCountryNameForLatLng(L.latLng(pinData.lat, pinData.lng));
                 const docRef = await addDoc(collection(db, "pins"), {
                     lat: pinData.lat,
                     lng: pinData.lng,
-                    color: pinData.color, // Opslaan van de initiële kleur
-                    size: pinData.size,   // Opslaan van de initiële grootte
+                    color: pinData.color, // Store the initial color
+                    size: pinData.size,   // Store the initial size
                     countryName: countryName || ''
                 });
                 pinData.firebaseDocId = docRef.id; 
-                console.log('Pin succesvol opgeslagen in Firestore met ID:', docRef.id);
+                console.log('Pin successfully saved to Firestore with ID:', docRef.id);
             } catch (error) {
-                console.error('Fout bij opslaan pin in Firestore:', error);
+                console.error('Error saving pin to Firestore:', error);
             }
         }
 
-        // --- Pins laden van Firestore ---
+        // --- Load Pins from Firestore ---
         async function loadPinsFromBackend() {
             try {
                 const querySnapshot = await getDocs(collection(db, "pins"));
                 
-                // Wis alle huidige markers en gewiste landen
+                // Clear all current markers and highlighted countries
                 map.eachLayer(function(layer) {
                     if (layer instanceof L.Marker) {
                         map.removeLayer(layer);
                     }
                 });
                 savedPins = []; 
-                leafletMarkers = {}; // Leeg de marker referentie object
+                leafletMarkers = {}; // Clear marker reference object
                 clearAllHighlightedCountries(true); 
 
                 querySnapshot.forEach(doc => {
                     const pin = doc.data();
                     const latlng = L.latLng(pin.lat, pin.lng);
                     
-                    // BELANGRIJK: Gebruik de LOKALE settings voor kleur en grootte bij het creëren van de marker!
-                    // De database waarden (pin.color, pin.size) worden nu genegeerd voor de WEERGAVE.
+                    // IMPORTANT: Use the LOCAL settings for color and size when creating the marker!
+                    // The database values (pin.color, pin.size) are now ignored for DISPLAY.
                     const marker = createPinMarker(latlng, settings.pinColor, settings.pinSize); 
                     marker.addTo(map);
 
                     const pinData = {
                         lat: pin.lat,
                         lng: pin.lng,
-                        // Bewaar de oorspronkelijke kleur en grootte uit de database voor als je het nodig hebt,
-                        // maar de rendering gebruikt 'settings.pinColor' en 'settings.pinSize'
+                        // Store the original color and size from the database in case you need them later,
+                        // but rendering uses 'settings.pinColor' and 'settings.pinSize'
                         originalColor: pin.color, 
                         originalSize: pin.size,
                         markerId: L.Util.stamp(marker),
                         firebaseDocId: doc.id 
                     };
                     savedPins.push(pinData);
-                    leafletMarkers[pinData.markerId] = marker; // Sla de marker op
+                    leafletMarkers[pinData.markerId] = marker; // Store the marker
 
                     const countryName = getCountryNameForLatLng(latlng);
                     if (countryName) {
@@ -424,19 +424,19 @@
                     }
 
                     marker.on('click', function(e) {
-                        if (confirm('Wil je deze pin verwijderen?')) {
+                        if (confirm('Do you want to remove this pin?')) {
                             removePin(pinData.markerId); 
                         }
                     });
                 });
-                console.log('Pins succesvol geladen van Firestore.');
+                console.log('Pins successfully loaded from Firestore.');
             } catch (error) {
-                console.error('Fout bij laden pins van Firestore:', error);
+                console.error('Error loading pins from Firestore:', error);
             }
         }
 
-        // Helper functie om de marker HTML/CSS te creëren
-        // Deze functie krijgt de kleur en grootte als argumenten die de marker daadwerkelijk gebruikt.
+        // Helper function to create the marker HTML/CSS
+        // This function receives the color and size arguments that the marker will actually use.
         function createPinMarker(latlng, colorToUse, sizeToUse) {
             const svgWidth = sizeToUse;
             const svgHeight = sizeToUse * 1.5;
@@ -470,28 +470,28 @@
             });
         }
 
-        // NIEUW: Functie om alle pins op de kaart bij te werken met de huidige settings
+        // NEW: Function to update all pins on the map with current settings
         function updateAllPinsOnMap() {
-            // Verwijder alle bestaande markers van de kaart
+            // Remove all existing markers from the map
             map.eachLayer(function(layer) {
                 if (layer instanceof L.Marker) {
                     map.removeLayer(layer);
                 }
             });
-            leafletMarkers = {}; // Leeg de marker referentie object
+            leafletMarkers = {}; // Clear marker reference object
 
-            // Voeg alle pins opnieuw toe met de huidige `settings.pinColor` en `settings.pinSize`
+            // Add all pins again with the current `settings.pinColor` and `settings.pinSize`
             savedPins.forEach(pinData => {
                 const latlng = L.latLng(pinData.lat, pinData.lng);
-                const marker = createPinMarker(latlng, settings.pinColor, settings.pinSize); // Gebruik LOKALE settings
+                const marker = createPinMarker(latlng, settings.pinColor, settings.pinSize); // Use LOCAL settings
                 marker.addTo(map);
 
-                // Update de referentie in leafletMarkers
+                // Update the reference in leafletMarkers
                 leafletMarkers[pinData.markerId] = marker;
 
-                // Herbevestig de click listener
+                // Re-attach the click listener
                 marker.on('click', function(e) {
-                    if (confirm('Wil je deze pin verwijderen?')) {
+                    if (confirm('Do you want to remove this pin?')) {
                         removePin(pinData.markerId); 
                     }
                 });
@@ -499,16 +499,16 @@
         }
 
 
-        // --- Wis alle pins (knop) ---
+        // --- Clear All Pins (button) ---
         async function clearAllPins() {
-            if (confirm('Weet je zeker dat je ALLE pins wilt verwijderen?')) {
+            if (confirm('Are you sure you want to remove ALL pins?')) {
                 map.eachLayer(function(layer) {
                     if (layer instanceof L.Marker) {
                         map.removeLayer(layer);
                     }
                 });
                 savedPins = []; 
-                leafletMarkers = {}; // Leeg de marker referentie object
+                leafletMarkers = {}; // Clear marker reference object
 
                 try {
                     const batch = writeBatch(db);
@@ -517,16 +517,16 @@
                         batch.delete(doc.ref);
                     });
                     await batch.commit();
-                    console.log("Alle pins succesvol verwijderd uit Firestore.");
+                    console.log("All pins successfully removed from Firestore.");
                 } catch (error) {
-                    console.error("Fout bij verwijderen van alle pins uit Firestore:", error);
+                    console.error("Error removing all pins from Firestore:", error);
                 }
                 
                 clearAllHighlightedCountries(true); 
             }
         }
 
-        // --- Land Inkleuren en Opslaan in Set ---
+        // --- Highlight Country and Save to Set ---
         function highlightCountry(countryName) {
             if (!countryName || highlightedCountryLayers[countryName]) {
                 return;
@@ -548,11 +548,11 @@
                     }
                 });
             } else {
-                console.warn("geoJsonLayer is nog niet geladen bij inkleuren van land:", countryName);
+                console.warn("geoJsonLayer not yet loaded when highlighting country:", countryName);
             }
         }
 
-        // --- Land ontkleuren ---
+        // --- Unhighlight Country ---
         function removeHighlightedCountry(countryName) {
             if (highlightedCountryLayers[countryName]) {
                 map.removeLayer(highlightedCountryLayers[countryName]);
@@ -561,9 +561,9 @@
             }
         }
 
-        // --- Alle ingekleurde landen ontkleuren ---
+        // --- Clear All Highlighted Countries ---
         function clearAllHighlightedCountries(skipConfirmation = false) {
-            if (skipConfirmation || confirm('Weet je zeker dat je ALLE ingekleurde landen wilt wissen?')) {
+            if (skipConfirmation || confirm('Are you sure you want to clear ALL highlighted countries?')) {
                 for (const countryName in highlightedCountryLayers) {
                     map.removeLayer(highlightedCountryLayers[countryName]);
                 }
@@ -572,7 +572,7 @@
             }
         }
 
-        // --- Instellingenpaneel Schakelen ---
+        // --- Toggle Settings Panel ---
         function toggleSettingsPanel() {
             const panel = document.getElementById('settings-panel');
             if (panel.style.display === 'block') {
@@ -583,7 +583,7 @@
             }
         }
 
-        // --- Zoekpaneel sluiten ---
+        // --- Close Search Panel ---
         function closeGeocoderPanel() {
             const geocoderContainer = document.querySelector('.leaflet-control-geocoder.leaflet-control');
             if (geocoderContainer && geocoderControl._results && geocoderControl._container) {
@@ -594,7 +594,7 @@
             }
         }
 
-        // --- Globale event listeners voor sluiten panelen ---
+        // --- Global Event Listeners for Closing Panels ---
         function addGlobalCloseListeners() {
             document.addEventListener('click', (event) => {
                 const settingsPanel = document.getElementById('settings-panel');
@@ -620,7 +620,7 @@
             });
         }
 
-        // --- Mobile View schakelen ---
+        // --- Toggle Mobile View ---
         function toggleMobileView() {
             isMobileViewActive = !isMobileViewActive;
             const controls = document.querySelectorAll('.leaflet-control');
@@ -645,7 +645,7 @@
             map.invalidateSize();
         }
 
-        // --- Event Listeners voor Instellingen ---
+        // --- Event Listeners for Settings ---
         function setupEventListeners() {
             const pinColorInput = document.getElementById('pin-color');
             const pinSizeInput = document.getElementById('pin-size');
@@ -653,15 +653,15 @@
             const clearPinsButton = document.getElementById('clear-pins-button');
             const clearHighlightedCountriesButton = document.getElementById('clear-highlighted-countries-button');
 
-            // Wanneer kleur of grootte van de pin wordt gewijzigd, update ALLE pins op de kaart
+            // When pin color or size is changed, update ALL pins on the map
             pinColorInput.addEventListener('input', (e) => {
                 settings.pinColor = e.target.value;
-                updateAllPinsOnMap(); // Roep de nieuwe update-functie aan
+                updateAllPinsOnMap(); // Call the new update function
             });
 
             pinSizeInput.addEventListener('input', (e) => {
                 settings.pinSize = parseInt(e.target.value, 10);
-                updateAllPinsOnMap(); // Roep de nieuwe update-functie aan
+                updateAllPinsOnMap(); // Call the new update function
             });
 
             countryColorInput.addEventListener('input', (e) => {
@@ -675,13 +675,13 @@
             clearHighlightedCountriesButton.addEventListener('click', clearAllHighlightedCountries);
         }
         
-        // --- Plugin voor Volledig Scherm ---
+        // --- Fullscreen Plugin ---
         L.Control.Fullscreen = L.Control.extend({
             options: {
                 position: 'topright',
                 title: {
-                    'false': 'Volledig scherm',
-                    'true': 'Verlaat volledig scherm'
+                    'false': 'View Fullscreen',
+                    'true': 'Exit Fullscreen'
                 }
             },
             onAdd: function (map) {
@@ -791,7 +791,7 @@
             document.addEventListener('msfullscreenchange', fullscreenchange);
         });
 
-        // Start de applicatie
+        // Start the application
         initializeMap();
     </script>
 
