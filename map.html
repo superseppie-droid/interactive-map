@@ -148,6 +148,45 @@
     <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
 
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, writeBatch } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js"; // Firestore imports
+
+        // Jouw web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAfqMgsxeClqeMq0Sa_OK-iRai272-ubDM",
+            authDomain: "mijninteractievekaart.firebaseapp.com",
+            projectId: "mijninteractievekaart",
+            storageBucket: "mijninteractievekaart.firebasestorage.app",
+            messagingSenderId: "1016407905474",
+            appId: "1:1016407905474:web:4dbe489ac6ff1aa3b7575b",
+            measurementId: "G-DWPFR0PZ7H"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        // const analytics = getAnalytics(app); // Optioneel, alleen als je Analytics gebruikt
+
+        // Krijg een referentie naar de Firestore-service
+        const db = getFirestore(app);
+
+        // --- Globale Variabelen ---
+        // Let op: 'let' variabelen moeten binnen de scope van de module script gedefinieerd worden.
+        // Echter, voor globale toegang door je andere scripts, is het handiger
+        // om een globaal object te maken en daar de db in te stoppen, of de functies te exporteren.
+        // Voor nu, laten we de db variabele globaal beschikbaar maken via window.
+        window.db = db; // Maak de Firestore instantie globaal toegankelijk
+        window.initializeMapApp = initializeMapApp; // Maak de initiële functie globaal
+
+        // De rest van je kaartlogica gaat hier
+        // We moeten de hele kaartlogica verplaatsen of een manier vinden om db hier te gebruiken.
+        // De eenvoudigste manier is om de hoofdlogica in deze module te plaatsen.
+        // Of, zoals hierboven, `window.db = db;` te gebruiken, en de rest van de code in een normale script tag te houden.
+        // Laten we voor de eenvoudigste route gaan: `window.db = db;` en je huidige script behouden.
+        // Zorg ervoor dat dit scriptblok BOVEN je hoofdscript komt, zodat `db` beschikbaar is.
+    </script>
+
+
     <script>
         // --- Globale Variabelen ---
         let map;
@@ -157,9 +196,6 @@
         let isMobileViewActive = false;
         let savedPins = []; // Array om opgeslagen pins bij te houden
         let countriesWithPins = new Set(); // Set om namen van landen met pins bij te houden
-
-        // JOUW GOOGLE APPS SCRIPT WEB-APP URL HIER
-        const webAppUrl = 'https://script.google.com/macros/s/AKfycbztPljEYo9KCAIAj6DMpN1UUeEUPPZIqA9HGmEx67KJBBrQRsQDqpIFWr_FcpX7_obo/exec';
 
         const settings = {
             pinColor: '#ff4b4b',
@@ -194,9 +230,8 @@
                     }
                 }).addTo(map);
 
-                // Nu landen geladen zijn, kunnen we opgeslagen pins en landen laden van de backend
+                // Nu landen geladen zijn, kunnen we opgeslagen pins laden van Firestore
                 loadPinsFromBackend(); 
-                // loadHighlightedCountriesFromLocalStorage();  <-- Deze is niet meer nodig als backend alles beheert
             } catch (error) {
                 console.error("Fout bij het laden van landengegevens:", error);
             }
@@ -304,10 +339,11 @@
                 lng: latlng.lng,
                 color: color,
                 size: size,
-                markerId: L.Util.stamp(marker) // Geef de marker een unieke ID
+                markerId: L.Util.stamp(marker), // Geef de marker een unieke ID
+                firebaseDocId: null // Tijdelijke placeholder voor Firebase document ID
             };
             savedPins.push(pinData);
-            savePinsToBackend(); // <-- Aangepast!
+            savePinsToBackend(pinData); // <-- Aangepast! Sla de nieuwe pin direct op.
 
             // Zoek het land op en kleur het in
             const countryName = getCountryNameForLatLng(latlng);
@@ -324,7 +360,7 @@
         }
 
         // --- Pin verwijderen en opslaan ---
-        function removePin(markerIdToRemove) {
+        async function removePin(markerIdToRemove) {
             // Vind de pin data en de marker die verwijderd moet worden
             const indexToRemove = savedPins.findIndex(pin => pin.markerId === markerIdToRemove);
             if (indexToRemove === -1) return; // Pin niet gevonden
@@ -341,7 +377,18 @@
 
             // Verwijder de pin uit de savedPins array
             savedPins.splice(indexToRemove, 1);
-            savePinsToBackend(); // <-- Aangepast!
+            
+            // Verwijder de pin ook uit Firestore
+            if (pinDataToRemove.firebaseDocId && window.db) {
+                try {
+                    await deleteDoc(doc(window.db, "pins", pinDataToRemove.firebaseDocId));
+                    console.log("Pin succesvol verwijderd uit Firestore.");
+                } catch (error) {
+                    console.error("Fout bij verwijderen pin uit Firestore:", error);
+                }
+            } else {
+                console.warn("Geen Firebase document ID gevonden voor verwijderde pin of Firestore niet geïnitialiseerd.");
+            }
 
             // Controleer of er nog pins in het land van de verwijderde pin zijn
             const countryNameOfRemovedPin = getCountryNameForLatLng(L.latLng(pinDataToRemove.lat, pinDataToRemove.lng));
@@ -372,76 +419,124 @@
             return foundCountryName;
         }
 
-        // --- Pins opslaan naar Google Sheet via Apps Script ---
-        async function savePinsToBackend() {
+        // --- Pins opslaan naar Firestore (addPin roept deze aan) ---
+        // Deze functie slaat één nieuwe pin op. ClearAllPins roept een andere aan.
+        async function savePinsToBackend(pinData) {
+            if (!window.db) {
+                console.error("Firestore is nog niet geïnitialiseerd.");
+                return;
+            }
             try {
-                const pinsToSave = await Promise.all(savedPins.map(async pin => {
-                    const countryName = getCountryNameForLatLng(L.latLng(pin.lat, pin.lng));
-                    return {
+                const countryName = getCountryNameForLatLng(L.latLng(pinData.lat, pinData.lng));
+                const docRef = await addDoc(collection(window.db, "pins"), {
+                    lat: pinData.lat,
+                    lng: pinData.lng,
+                    color: pinData.color,
+                    size: pinData.size,
+                    countryName: countryName || ''
+                });
+                pinData.firebaseDocId = docRef.id; // Sla de document ID op in de lokale pin data
+                console.log('Pin succesvol opgeslagen in Firestore met ID:', docRef.id);
+            } catch (error) {
+                console.error('Fout bij opslaan pin in Firestore:', error);
+            }
+        }
+
+        // --- Pins laden van Firestore ---
+        async function loadPinsFromBackend() {
+            if (!window.db) {
+                console.error("Firestore is nog niet geïnitialiseerd.");
+                return;
+            }
+            try {
+                const querySnapshot = await getDocs(collection(window.db, "pins"));
+                savedPins = []; // Wis huidige pins voor laden
+                
+                // Verwijder eerst alle bestaande markers van de kaart
+                map.eachLayer(function(layer) {
+                    if (layer instanceof L.Marker) {
+                        map.removeLayer(layer);
+                    }
+                });
+                // Verwijder ook alle ingekleurde landen
+                clearAllHighlightedCountries(true); 
+
+                querySnapshot.forEach(doc => {
+                    const pin = doc.data();
+                    const latlng = L.latLng(pin.lat, pin.lng);
+                    const marker = createPinMarker(latlng, pin.color, pin.size); // Helper functie om marker te maken
+                    marker.addTo(map);
+
+                    const pinData = {
                         lat: pin.lat,
                         lng: pin.lng,
                         color: pin.color,
                         size: pin.size,
-                        countryName: countryName || '' // Voeg landnaam toe aan opslag
+                        markerId: L.Util.stamp(marker),
+                        firebaseDocId: doc.id // Sla de Firebase document ID op
                     };
-                }));
+                    savedPins.push(pinData);
 
-                const response = await fetch(webAppUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ action: 'savePins', pins: pinsToSave })
-                });
-                const result = await response.json();
-                if (result.status === 'success') {
-                    console.log('Pins succesvol opgeslagen in Google Sheet.');
-                } else {
-                    console.error('Fout bij opslaan pins:', result.message);
-                }
-            } catch (error) {
-                console.error('Fout bij communicatie met Apps Script (opslaan):', error);
-            }
-        }
+                    // Zoek het land op en kleur het in
+                    const countryName = getCountryNameForLatLng(latlng);
+                    if (countryName) {
+                        highlightCountry(countryName);
+                    }
 
-        // --- Pins laden van Google Sheet via Apps Script ---
-        async function loadPinsFromBackend() {
-            try {
-                const response = await fetch(webAppUrl, {
-                    method: 'POST', // We gebruiken POST omdat Apps Script doPost() dan aanroept
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ action: 'loadPins' })
-                });
-                const result = await response.json();
-                if (result.status === 'success' && result.pins) {
-                    savedPins = []; // Wis huidige pins voor laden
-                    
-                    // Verwijder eerst alle bestaande markers van de kaart
-                    map.eachLayer(function(layer) {
-                        if (layer instanceof L.Marker) {
-                            map.removeLayer(layer);
+                    // Voeg click listener toe voor verwijderen
+                    marker.on('click', function(e) {
+                        if (confirm('Wil je deze pin verwijderen?')) {
+                            removePin(pinData.markerId); 
                         }
                     });
-                    // Verwijder ook alle ingekleurde landen
-                    clearAllHighlightedCountries(true); 
-
-                    // Voeg de geladen pins toe en laat addPin ze ook inkleuren
-                    result.pins.forEach(pin => {
-                        addPin(L.latLng(pin.lat, pin.lng), pin.color, pin.size);
-                    });
-                    console.log('Pins succesvol geladen van Google Sheet.');
-                } else {
-                    console.error('Fout bij laden pins:', result.message);
-                }
+                });
+                console.log('Pins succesvol geladen van Firestore.');
             } catch (error) {
-                console.error('Fout bij communicatie met Apps Script (laden):', error);
+                console.error('Fout bij laden pins van Firestore:', error);
             }
         }
 
+        // Helper functie om de marker HTML/CSS te creëren
+        function createPinMarker(latlng, color, size) {
+            const svgWidth = size;
+            const svgHeight = size * 1.5;
+            const circleRadius = size / 2;
+            const circleCenterY = circleRadius;
+            const pointX = size / 2;
+            const pointY = svgHeight;
+            const iconSizeInnerCircle = size * 0.2;
+            const iconX = size / 2;
+            const iconY = size / 2 + (size * 0.05);
+
+            const pinIconHtml = `
+                <div class="custom-pin-svg-container" style="width: ${svgWidth}px; height: ${svgHeight}px;">
+                    <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="${circleRadius}" cy="${circleCenterY}" r="${circleRadius}" fill="${color}"/>
+                        <path d="M${pointX},${circleRadius} Q${pointX - circleRadius/2},${circleRadius*1.5} ${pointX},${pointY} Q${pointX + circleRadius/2},${circleRadius*1.5} ${pointX},${circleRadius} Z" fill="${color}"/>
+                        <circle cx="${iconX}" cy="${iconY}" r="${iconSizeInnerCircle}" fill="white"/>
+                    </svg>
+                </div>`;
+
+            const iconAnchorX = pointX;
+            const iconAnchorY = pointY;
+
+            return L.marker(latlng, { 
+                icon: L.divIcon({
+                    className: '',
+                    html: pinIconHtml,
+                    iconSize: [svgWidth, svgHeight],
+                    iconAnchor: [iconAnchorX, iconAnchorY] 
+                })
+            });
+        }
+
+
         // --- Wis alle pins (knop) ---
-        function clearAllPins() {
+        async function clearAllPins() {
+            if (!window.db) {
+                console.error("Firestore is nog niet geïnitialiseerd.");
+                return;
+            }
             if (confirm('Weet je zeker dat je ALLE pins wilt verwijderen?')) {
                 // Verwijder alle markers van de kaart
                 map.eachLayer(function(layer) {
@@ -450,7 +545,20 @@
                     }
                 });
                 savedPins = []; // Leeg de array
-                savePinsToBackend(); // <-- Aangepast! Sla de lege array op naar de backend
+
+                // Verwijder ook alle pins uit Firestore
+                try {
+                    const batch = writeBatch(window.db); // Gebruik een batch voor efficiëntie
+                    const snapshot = await getDocs(collection(window.db, "pins"));
+                    snapshot.docs.forEach((doc) => {
+                        batch.delete(doc.ref);
+                    });
+                    await batch.commit();
+                    console.log("Alle pins succesvol verwijderd uit Firestore.");
+                } catch (error) {
+                    console.error("Fout bij verwijderen van alle pins uit Firestore:", error);
+                }
+                
                 clearAllHighlightedCountries(true); // Verwijder ook alle ingekleurde landen, zonder extra prompt
             }
         }
@@ -474,7 +582,6 @@
                         }).addTo(map);
                         highlightedCountryLayers[countryName] = countryGeoJson; // Sla de laag op per landnaam
                         countriesWithPins.add(countryName); // Voeg toe aan de set van landen met pins
-                        // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
                         return false; // Stop iteratie zodra gevonden
                     }
                 });
@@ -489,7 +596,6 @@
                 map.removeLayer(highlightedCountryLayers[countryName]);
                 delete highlightedCountryLayers[countryName]; // Verwijder uit het object
                 countriesWithPins.delete(countryName); // Verwijder uit de set
-                // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
             }
         }
 
@@ -501,28 +607,8 @@
                 }
                 highlightedCountryLayers = {}; // Leeg het object
                 countriesWithPins.clear(); // Leeg de set
-                // saveHighlightedCountriesToLocalStorage(); <-- Deze is niet meer nodig als backend alles beheert
             }
         }
-
-        // --- Opgeslagen landen opslaan in Local Storage (nu als array van namen) ---
-        // Deze functie is niet meer nodig, alle opslag gebeurt via de backend.
-        // function saveHighlightedCountriesToLocalStorage() {
-        //     localStorage.setItem('countriesWithPins', JSON.stringify(Array.from(countriesWithPins)));
-        // }
-
-        // --- Opgeslagen landen laden vanuit Local Storage ---
-        // Deze functie is niet meer nodig, loadPinsFromBackend() zal de landen automatisch inkleuren.
-        // function loadHighlightedCountriesFromLocalStorage() {
-        //     const storedCountries = localStorage.getItem('countriesWithPins');
-        //     if (storedCountries) {
-        //         const countryNames = JSON.parse(storedCountries);
-        //         countriesWithPins = new Set(countryNames); 
-        //         countriesWithPins.forEach(countryName => {
-        //             highlightCountry(countryName);
-        //         });
-        //     }
-        // }
 
         // --- Instellingenpaneel Schakelen ---
         function toggleSettingsPanel() {
